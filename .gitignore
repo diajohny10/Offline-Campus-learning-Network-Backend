@@ -1,0 +1,4 @@
+node_modules/
+uploads/
+*.tmp
+campusnet_db.json.tmp

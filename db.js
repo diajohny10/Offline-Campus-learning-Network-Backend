@@ -12,22 +12,8 @@ class Database {
         { id: 'CS2026-003', name: 'Charlie Davis', section: 'CS Sec B', password: 'student123' },
         { id: 'CS2026-004', name: 'Diana Prince', section: 'CS Sec A', password: 'student123' }
       ],
-      resources: [
-        { id: 1, name: 'Module 1 Notes.pdf', subject: 'CN', uploadedBy: 'Teacher CN', date: '2025-05-12', size: '2.4 MB', filename: 'sample_cn1.pdf' },
-        { id: 2, name: 'Network Topologies.pdf', subject: 'CN', uploadedBy: 'Teacher CN', date: '2025-05-13', size: '1.8 MB', filename: 'sample_cn2.pdf' },
-        { id: 3, name: 'OSI Model.pdf', subject: 'CN', uploadedBy: 'Teacher CN', date: '2025-05-14', size: '1.3 MB', filename: 'sample_cn3.pdf' },
-        { id: 4, name: 'Binary Trees & Graphs.pdf', subject: 'DS', uploadedBy: 'Teacher DS', date: '2025-05-10', size: '3.1 MB', filename: 'sample_ds1.pdf' },
-        { id: 5, name: 'Sorting Algorithms.pdf', subject: 'DS', uploadedBy: 'Teacher DS', date: '2025-05-11', size: '2.0 MB', filename: 'sample_ds2.pdf' },
-        { id: 6, name: 'SQL & Normalization.pdf', subject: 'DMS', uploadedBy: 'Teacher DMS', date: '2025-05-08', size: '4.5 MB', filename: 'sample_dms1.pdf' },
-        { id: 7, name: 'Macroeconomics Overview.pdf', subject: 'ECON', uploadedBy: 'Teacher ECON', date: '2025-05-05', size: '1.9 MB', filename: 'sample_econ1.pdf' },
-        { id: 8, name: 'Human Values & Ethics.pdf', subject: 'UHV', uploadedBy: 'Teacher UHV', date: '2025-05-01', size: '1.1 MB', filename: 'sample_uhv1.pdf' },
-        { id: 9, name: 'CPU Pipeline & Cache.pdf', subject: 'COA', uploadedBy: 'Teacher COA', date: '2025-05-02', size: '2.8 MB', filename: 'sample_coa1.pdf' }
-      ],
-      transfers: [
-        { id: 101, from: 'Alice Smith', to: 'Bob Martin', type: 'student_to_student', fileName: 'project_draft.pdf', date: '10:31:12', timestamp: '2026-09-07 10:31:12' },
-        { id: 102, from: 'Alice Smith', to: 'Teacher CN', type: 'student_to_teacher', subject: 'CN', fileName: 'assignment1_final.pdf', date: '10:34:08', timestamp: '2026-09-07 10:34:08' },
-        { id: 103, from: 'Teacher CN', to: 'All Students (CN)', type: 'upload_by_teacher', subject: 'CN', fileName: 'Module 1 Notes.pdf', date: '10:36:21', timestamp: '2026-09-07 10:36:21' }
-      ]
+      resources: [],
+      transfers: []
     };
 
     this.init();
@@ -39,7 +25,7 @@ class Database {
         const raw = fs.readFileSync(DB_PATH, 'utf8');
         this.data = JSON.parse(raw);
       } catch (err) {
-        console.error('Error loading database file, using defaults:', err.message);
+        console.error('Error loading database file:', err.message);
         this.save();
       }
     } else {
@@ -48,72 +34,115 @@ class Database {
   }
 
   save() {
-    try {
-      fs.writeFileSync(DB_PATH, JSON.stringify(this.data, null, 2), 'utf8');
-    } catch (err) {
-      console.error('Error saving database:', err.message);
-    }
+    const tempPath = DB_PATH + '.tmp';
+    const content = JSON.stringify(this.data, null, 2);
+    fs.writeFileSync(tempPath, content, 'utf8');
+    fs.renameSync(tempPath, DB_PATH);
   }
 
   // --- STUDENTS API ---
+  // Return students without passwords for public/roster endpoint
   getStudents() {
-    return this.data.students;
+    return (this.data.students || []).map(({ password, ...rest }) => rest);
   }
 
+  // Internal find with password for auth
   findStudentByName(name) {
-    return this.data.students.find(s => s.name.toLowerCase() === name.toLowerCase());
+    if (!name) return null;
+    return (this.data.students || []).find(s => s.name.toLowerCase() === name.toLowerCase());
   }
 
   addStudent(student) {
+    const backup = [...this.data.students];
     this.data.students.push(student);
-    this.save();
-    return student;
+    try {
+      this.save();
+      return student;
+    } catch (err) {
+      this.data.students = backup;
+      throw err;
+    }
   }
 
   // --- RESOURCES API ---
   getResources(subject = null) {
-    if (subject && subject !== 'ALL') {
-      return this.data.resources.filter(r => r.subject.toUpperCase() === subject.toUpperCase());
+    let list = this.data.resources || [];
+    if (subject && subject.toUpperCase() !== 'ALL') {
+      list = list.filter(r => r.subject.toUpperCase() === subject.toUpperCase());
     }
-    return this.data.resources;
+    return list;
   }
 
-  addResource(resource) {
+  getResourceById(id) {
+    if (id === undefined || id === null) return null;
+    const targetId = String(id);
+    return (this.data.resources || []).find(r => String(r.id) === targetId);
+  }
+
+  addResource(resource, transfer = null) {
+    const backupResources = [...this.data.resources];
+    const backupTransfers = [...this.data.transfers];
+
     this.data.resources.unshift(resource);
-    this.save();
-    return resource;
+    if (transfer) {
+      this.data.transfers.unshift(transfer);
+    }
+
+    try {
+      this.save();
+      return resource;
+    } catch (err) {
+      this.data.resources = backupResources;
+      this.data.transfers = backupTransfers;
+      throw err;
+    }
   }
 
   deleteResource(id, teacherSubject) {
-    const resource = this.data.resources.find(r => r.id === parseInt(id));
+    const targetId = String(id);
+    const resource = (this.data.resources || []).find(r => String(r.id) === targetId);
     if (!resource) {
       throw new Error('Resource not found');
     }
-    if (resource.subject.toUpperCase() !== teacherSubject.toUpperCase()) {
+    if (teacherSubject && resource.subject.toUpperCase() !== teacherSubject.toUpperCase()) {
       throw new Error(`Permission Denied: Teacher ${teacherSubject} can only delete files for ${teacherSubject}`);
     }
 
-    this.data.resources = this.data.resources.filter(r => r.id !== parseInt(id));
-    this.save();
-    return resource;
+    const backupResources = [...this.data.resources];
+    this.data.resources = this.data.resources.filter(r => String(r.id) !== targetId);
+
+    try {
+      this.save();
+      return resource;
+    } catch (err) {
+      this.data.resources = backupResources;
+      throw err;
+    }
   }
 
   // --- TRANSFERS API ---
   getTransfers() {
-    return this.data.transfers;
+    return this.data.transfers || [];
   }
 
   getUserTransfers(userName) {
-    return this.data.transfers.filter(t => 
-      t.from.toLowerCase() === userName.toLowerCase() || 
-      t.to.toLowerCase() === userName.toLowerCase()
+    if (!userName) return [];
+    return (this.data.transfers || []).filter(t => 
+      (t.from && t.from.toLowerCase() === userName.toLowerCase()) || 
+      (t.to && t.to.toLowerCase() === userName.toLowerCase())
     );
   }
 
   addTransfer(transfer) {
+    const backupTransfers = [...this.data.transfers];
     this.data.transfers.unshift(transfer);
-    this.save();
-    return transfer;
+    try {
+      this.save();
+      return transfer;
+    } catch (err) {
+      this.data.transfers = backupTransfers;
+      throw err;
+    }
   }
 }
 
